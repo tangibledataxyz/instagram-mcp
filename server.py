@@ -3,6 +3,10 @@ import json
 import requests
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
+import firebase_admin
+from firebase_admin import auth as firebase_auth
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 from urllib.parse import urlparse
 import socket
 import ipaddress
@@ -10,7 +14,37 @@ import ipaddress
 IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 IG_USER_ID = os.environ["IG_USER_ID"]
 
+
+# Initialize Firebase Admin for Centralized Auth (tangible-data-root)
+try:
+    firebase_admin.initialize_app(firebase_admin.credentials.ApplicationDefault(), {
+        "projectId": "tangible-data-root",
+    })
+except ValueError:
+    # Already initialized
+    pass
+
+class FirebaseAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Allow health checks without auth
+        if request.url.path == "/health":
+            return await call_next(request)
+            
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return Response("Unauthorized: Missing or invalid Authorization header", status_code=401)
+            
+        id_token = auth_header.split("Bearer ")[1]
+        try:
+            # Verify the token against tangible-data-root
+            decoded_token = firebase_auth.verify_id_token(id_token)
+            request.state.user = decoded_token
+            return await call_next(request)
+        except Exception as e:
+            return Response(f"Unauthorized: {str(e)}", status_code=401)
+
 mcp = FastMCP("instagram-mcp")
+
 
 
 def is_safe_url(url: str) -> bool:
@@ -157,4 +191,5 @@ if __name__ == "__main__":
     # mcp.run(transport="streamable-http") 
     # Use uvicorn directly to ensure it listens on the correct port and host for Cloud Run
     app = mcp.streamable_http_app()
+    app.add_middleware(FirebaseAuthMiddleware)
     uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
