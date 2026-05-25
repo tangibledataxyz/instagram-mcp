@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response, JSONResponse
+from starlette.responses import Response, JSONResponse, RedirectResponse
 from urllib.parse import urlparse
 import socket
 import ipaddress
@@ -36,12 +36,18 @@ def setup_oauth(app):
         # Dummy redirect for Claude Web
         redirect_uri = request.query_params.get("redirect_uri")
         state = request.query_params.get("state")
-        return Response(status_code=302, headers={"Location": f"{redirect_uri}?code=dummy_code&state={state}"})
+        if not redirect_uri:
+             return Response("Missing redirect_uri", status_code=400)
+        return RedirectResponse(url=f"{redirect_uri}?code=dummy_code&state={state}")
 
     @app.route("/token", methods=["POST"])
     async def token(request):
         # Validate client_secret against MCP_API_KEY
-        form = await request.form()
+        try:
+            form = await request.form()
+        except Exception:
+            return JSONResponse({"error": "invalid_request"}, status_code=400)
+            
         client_secret = form.get("client_secret")
         expected_key = os.environ.get("MCP_API_KEY")
         
