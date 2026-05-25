@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
+from starlette.responses import Response, JSONResponse
 from urllib.parse import urlparse
 import socket
 import ipaddress
@@ -15,8 +15,8 @@ IG_USER_ID = os.environ["IG_USER_ID"]
 
 class StaticApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        # Allow health checks without auth
-        if request.url.path == "/health":
+        # Allow health and oauth endpoints without auth
+        if request.url.path in ["/health", "/authorize", "/token"]:
             return await call_next(request)
             
         auth_header = request.headers.get("Authorization")
@@ -29,6 +29,29 @@ class StaticApiKeyMiddleware(BaseHTTPMiddleware):
             return Response("Unauthorized: Invalid API Key", status_code=401)
             
         return await call_next(request)
+
+def setup_oauth(app):
+    @app.route("/authorize")
+    async def authorize(request):
+        # Dummy redirect for Claude Web
+        redirect_uri = request.query_params.get("redirect_uri")
+        state = request.query_params.get("state")
+        return Response(status_code=302, headers={"Location": f"{redirect_uri}?code=dummy_code&state={state}"})
+
+    @app.route("/token", methods=["POST"])
+    async def token(request):
+        # Validate client_secret against MCP_API_KEY
+        form = await request.form()
+        client_secret = form.get("client_secret")
+        expected_key = os.environ.get("MCP_API_KEY")
+        
+        if client_secret == expected_key:
+            return JSONResponse({
+                "access_token": expected_key,
+                "token_type": "bearer",
+                "expires_in": 3600
+            })
+        return JSONResponse({"error": "invalid_client"}, status_code=400)
 
 mcp = FastMCP("instagram-mcp")
 
@@ -178,5 +201,6 @@ if __name__ == "__main__":
     # mcp.run(transport="streamable-http") 
     # Use uvicorn directly to ensure it listens on the correct port and host for Cloud Run
     app = mcp.streamable_http_app()
+    setup_oauth(app)
     app.add_middleware(StaticApiKeyMiddleware)
     uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
