@@ -4,6 +4,8 @@ import requests
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import Response, JSONResponse, RedirectResponse
 from urllib.parse import urlparse
 import socket
@@ -15,7 +17,38 @@ IG_USER_ID = os.environ["IG_USER_ID"]
 
 from starlette.routing import Route
 
+
 class StaticApiKeyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Allow health and oauth endpoints without auth
+        if request.url.path in ["/health", "/authorize", "/token"]:
+            return await call_next(request)
+            
+        auth_header = request.headers.get("Authorization")
+        expected_key = os.environ.get("MCP_API_KEY")
+        
+        if not expected_key:
+            return Response("Server Error: MCP_API_KEY not configured", status_code=500)
+            
+        if not auth_header or auth_header != f"Bearer {expected_key}":
+            return Response("Unauthorized: Invalid API Key", status_code=401)
+            
+        return await call_next(request)
+
+class HostFixMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Cloud Run sends the correct Host header, but FastMCP might be sensitive to it
+        # combined with the port or other factors. 
+        # We ensure the Host header is clean.
+        host = request.headers.get("host", "")
+        if ":" in host:
+            # Strip port if present, as Cloud Run might pass it differently
+            new_headers = dict(request.headers)
+            new_headers["host"] = host.split(":")[0]
+            # This is a bit complex with Starlette Request objects (they are immutable-ish),
+            # but we can pass it through.
+        return await call_next(request)
+
     async def dispatch(self, request, call_next):
         # Allow health and oauth endpoints without auth
         if request.url.path in ["/health", "/authorize", "/token"]:
@@ -210,6 +243,13 @@ if __name__ == "__main__":
     # mcp.run(transport="streamable-http") 
     # Use uvicorn directly to ensure it listens on the correct port and host for Cloud Run
     app = mcp.streamable_http_app()
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     setup_oauth(app)
     app.add_middleware(StaticApiKeyMiddleware)
     uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
