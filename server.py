@@ -151,4 +151,10 @@ def get_recent_posts(limit: int = 5) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    import uvicorn
+    import os
+    port = int(os.environ.get("PORT", 8080))
+    # mcp.run(transport="streamable-http") 
+    # Use uvicorn directly to ensure it listens on the correct port and host for Cloud Run
+    app = mcp.streamable_http_app()
+    uvicorn.run(app, host="0.0.0.0", port=port)
