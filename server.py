@@ -3,6 +3,9 @@ import json
 import requests
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
+from urllib.parse import urlparse
+import socket
+import ipaddress
 
 IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 IG_USER_ID = os.environ["IG_USER_ID"]
@@ -10,9 +13,28 @@ IG_USER_ID = os.environ["IG_USER_ID"]
 mcp = FastMCP("instagram-mcp")
 
 
+def is_safe_url(url: str) -> bool:
+    """Check if the URL is safe and not pointing to internal/private networks."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ["http", "https"]:
+            return False
+        hostname = parsed.hostname
+        if not hostname:
+            return False
+        # Resolve to IP to check for private ranges
+        ip = socket.gethostbyname(hostname)
+        ip_obj = ipaddress.ip_address(ip)
+        return not (ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast)
+    except Exception:
+        return False
+
 @mcp.tool()
 def scrape_website(url: str) -> str:
     """Scrape text content from a website URL."""
+    if not is_safe_url(url):
+        return json.dumps({"error": "URL not allowed for security reasons (private/internal range blocked)"})
+    
     headers = {"User-Agent": "Mozilla/5.0 (compatible; TangibleDataBot/1.0)"}
     resp = requests.get(url, headers=headers, timeout=15)
     resp.raise_for_status()
