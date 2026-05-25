@@ -13,6 +13,8 @@ IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 IG_USER_ID = os.environ["IG_USER_ID"]
 
 
+from starlette.routing import Route
+
 class StaticApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         # Allow health and oauth endpoints without auth
@@ -30,34 +32,35 @@ class StaticApiKeyMiddleware(BaseHTTPMiddleware):
             
         return await call_next(request)
 
-def setup_oauth(app):
-    @app.route("/authorize")
-    async def authorize(request):
-        # Dummy redirect for Claude Web
-        redirect_uri = request.query_params.get("redirect_uri")
-        state = request.query_params.get("state")
-        if not redirect_uri:
-             return Response("Missing redirect_uri", status_code=400)
-        return RedirectResponse(url=f"{redirect_uri}?code=dummy_code&state={state}")
+async def authorize(request):
+    # Dummy redirect for Claude Web
+    redirect_uri = request.query_params.get("redirect_uri")
+    state = request.query_params.get("state")
+    if not redirect_uri:
+         return Response("Missing redirect_uri", status_code=400)
+    return RedirectResponse(url=f"{redirect_uri}?code=dummy_code&state={state}")
 
-    @app.route("/token", methods=["POST"])
-    async def token(request):
-        # Validate client_secret against MCP_API_KEY
-        try:
-            form = await request.form()
-        except Exception:
-            return JSONResponse({"error": "invalid_request"}, status_code=400)
-            
-        client_secret = form.get("client_secret")
-        expected_key = os.environ.get("MCP_API_KEY")
+async def token(request):
+    # Validate client_secret against MCP_API_KEY
+    try:
+        form = await request.form()
+    except Exception:
+        return JSONResponse({"error": "invalid_request"}, status_code=400)
         
-        if client_secret == expected_key:
-            return JSONResponse({
-                "access_token": expected_key,
-                "token_type": "bearer",
-                "expires_in": 3600
-            })
-        return JSONResponse({"error": "invalid_client"}, status_code=400)
+    client_secret = form.get("client_secret")
+    expected_key = os.environ.get("MCP_API_KEY")
+    
+    if client_secret == expected_key:
+        return JSONResponse({
+            "access_token": expected_key,
+            "token_type": "bearer",
+            "expires_in": 3600
+        })
+    return JSONResponse({"error": "invalid_client"}, status_code=400)
+
+def setup_oauth(app):
+    app.add_route("/authorize", authorize)
+    app.add_route("/token", token, methods=["POST"])
 
 mcp = FastMCP("instagram-mcp")
 
