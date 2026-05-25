@@ -36,15 +36,16 @@ def scrape_website(url: str) -> str:
 @mcp.tool()
 def publish_instagram_post(caption: str) -> str:
     """
-    Publish a text post to Instagram.
+    Publish a post to Instagram using a default background image.
     caption: The full post text including hashtags.
     """
+    DEFAULT_IMAGE_URL = "https://storage.googleapis.com/tangibledata-assets/post-bg.png"
     create_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
     resp = requests.post(
         create_url,
         data={
             "caption": caption,
-            "media_type": "TEXT",
+            "image_url": DEFAULT_IMAGE_URL,
             "access_token": IG_ACCESS_TOKEN,
         },
         timeout=15,
