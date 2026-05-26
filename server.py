@@ -255,6 +255,7 @@ def get_recent_posts(limit: int = 5) -> str:
 
 
 
+
 @mcp.tool()
 def create_branded_post(headline: str, subtitle: str, caption: str) -> str:
     """
@@ -274,37 +275,60 @@ def create_branded_post(headline: str, subtitle: str, caption: str) -> str:
     draw = ImageDraw.Draw(img)
     
     # 2. Add Brand Elements (Geometric modern shapes)
-    # Background accent bar
-    draw.rectangle([0, height-20, width, height], fill=accent_color)
+    # Background accent bar at the bottom
+    draw.rectangle([0, height-15, width, height], fill=accent_color)
+    
+    # Vertical accent line on the left
+    draw.rectangle([0, 0, 10, height], fill=accent_color)
     
     # Logo shape (A minimalist data point)
-    draw.ellipse([80, 80, 140, 140], outline=accent_color, width=4)
-    draw.point([110, 110], fill=accent_color)
+    draw.ellipse([80, 80, 150, 150], outline=accent_color, width=5)
+    draw.ellipse([105, 105, 125, 125], fill=accent_color)
     
     # 3. Add Text
     try:
-        # We try to find a system bold font
-        font_path = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-        font_title = ImageFont.truetype(font_path, 100) if os.path.exists(font_path) else ImageFont.load_default(size=100)
-        font_sub = ImageFont.truetype(font_path, 50) if os.path.exists(font_path) else ImageFont.load_default(size=50)
-        font_footer = ImageFont.load_default(size=30)
+        # On Cloud Run (Linux), we try to find common bold fonts
+        # If not found, load_default will be used
+        font_paths = [
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        ]
+        font_path = next((p for p in font_paths if os.path.exists(p)), None)
+        
+        if font_path:
+            font_title = ImageFont.truetype(font_path, 110)
+            font_sub = ImageFont.truetype(font_path, 55)
+            font_footer = ImageFont.truetype(font_path, 35)
+        else:
+            font_title = ImageFont.load_default(size=110)
+            font_sub = ImageFont.load_default(size=55)
+            font_footer = ImageFont.load_default(size=35)
     except:
         font_title = ImageFont.load_default()
         font_sub = ImageFont.load_default()
         font_footer = ImageFont.load_default()
 
-    # Draw Headline (Left aligned for modern look)
-    margin = 80
-    draw.text((margin, height//2 - 150), headline.upper(), fill=text_color, font=font_title, align="left")
+    # Draw Headline (Upper case, Left aligned)
+    margin = 100
+    # Split headline if too long (simple logic)
+    words = headline.upper().split()
+    if len(words) > 3:
+        line1 = " ".join(words[:len(words)//2])
+        line2 = " ".join(words[len(words)//2:])
+        draw.text((margin, height//2 - 180), line1, fill=text_color, font=font_title)
+        draw.text((margin, height//2 - 60), line2, fill=text_color, font=font_title)
+    else:
+        draw.text((margin, height//2 - 120), headline.upper(), fill=text_color, font=font_title)
     
-    # Draw Subtitle (Indented)
-    draw.text((margin, height//2 + 20), subtitle, fill=accent_color, font=font_sub, align="left")
+    # Draw Subtitle (Indented slightly)
+    draw.text((margin, height//2 + 100), subtitle, fill=accent_color, font=font_sub)
     
     # Draw Footer
-    draw.text((margin, height - 100), "TANGIBLEDATA.XYZ", fill=secondary_text, font=font_footer)
+    draw.text((margin, height - 120), "TANGIBLE DATA", fill=text_color, font=font_footer)
+    draw.text((margin + 300, height - 120), "|  TANGIBLEDATA.XYZ", fill=secondary_text, font=font_footer)
 
     # 4. Upload to GCS
-    bucket_name = "tangibledata-assets"
+    bucket_name = "instagram-mcp-assets-115449310562"
     storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
     filename = f"mcp-posts/{uuid.uuid4()}.png"
@@ -313,12 +337,13 @@ def create_branded_post(headline: str, subtitle: str, caption: str) -> str:
     img_byte_arr = io.BytesIO()
     img.save(img_byte_arr, format="PNG")
     blob.upload_from_string(img_byte_arr.getvalue(), content_type="image/png")
-    blob.make_public()
+    # blob.make_public() # Already handled by bucket policy
     
     public_url = blob.public_url
 
     # 5. Publish to Instagram
     return publish_instagram_post_with_image(caption, public_url)
+
 
 def publish_instagram_post_with_image(caption: str, image_url: str) -> str:
     create_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
