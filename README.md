@@ -77,14 +77,15 @@ client_secret=TU_APP_SECRET&\
 fb_exchange_token=TU_TOKEN_ACTUAL"
 ```
 
-Actualiza Secret Manager y redespliega:
+Actualiza Secret Manager y fuerza una nueva revisión de Cloud Run:
 
 ```bash
-read -rsp "NUEVO IG_ACCESS_TOKEN: " IG_ACCESS_TOKEN; export IG_ACCESS_TOKEN; echo
-bash deploy.sh --setup-secrets
+export PROJECT_ID="instagram-mcp-prod"
+export REGION="europe-west1"
+./scripts/update_ig_token.sh
 ```
 
-No uses `gcloud run services update --update-env-vars IG_ACCESS_TOKEN=...` porque deja el token como variable de entorno gestionada fuera de Secret Manager.
+El script usa `read -rsp`, añade una nueva versión del secreto `IG_ACCESS_TOKEN` y ejecuta `gcloud run services update --update-secrets` para que Cloud Run cargue `latest`. No pegues tokens en el chat ni uses `--update-env-vars IG_ACCESS_TOKEN=...`.
 
 
 ## Publicar Reels
