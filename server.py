@@ -18,6 +18,17 @@ IG_USER_ID = os.environ["IG_USER_ID"]
 from starlette.routing import Route
 
 
+
+class ForceHostMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        # Force the host header to match what Cloud Run/FastMCP expect
+        # This bypasses the 421 Misdirected Request from transport_security.py
+        request.scope["headers"] = [
+            (k, v) for k, v in request.scope["headers"] if k.lower() != b"host"
+        ]
+        request.scope["headers"].append((b"host", b"0.0.0.0")) 
+        return await call_next(request)
+
 class StaticApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         # Allow health and oauth endpoints without auth
@@ -244,6 +255,7 @@ if __name__ == "__main__":
     # Use uvicorn directly to ensure it listens on the correct port and host for Cloud Run
     app = mcp.streamable_http_app()
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+    app.add_middleware(ForceHostMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
