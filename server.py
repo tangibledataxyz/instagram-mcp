@@ -107,6 +107,8 @@ def setup_oauth(app):
     app.add_route("/token", token, methods=["POST"])
 
 mcp = FastMCP("instagram-mcp")
+# Disable DNS rebinding protection to allow connection from Cloud Run/Claude Web
+mcp.settings.transport_security.enable_dns_rebinding_protection = False
 
 
 
