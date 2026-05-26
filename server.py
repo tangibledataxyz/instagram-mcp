@@ -3,6 +3,11 @@ import json
 import requests
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
+from PIL import Image, ImageDraw, ImageFont
+import io
+import uuid
+import base64
+from google.cloud import storage
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -248,6 +253,80 @@ def get_recent_posts(limit: int = 5) -> str:
         return json.dumps({"error": resp.json()})
     return json.dumps(resp.json())
 
+
+
+@mcp.tool()
+def create_branded_post(headline: str, subtitle: str, caption: str) -> str:
+    """
+    Creates a branded 1:1 Instagram image following Tangible Data design system and publishes it.
+    headline: The main big text.
+    subtitle: A smaller supporting text.
+    caption: The actual Instagram caption.
+    """
+    # 1. Create Image (1:1 Square)
+    width, height = 1080, 1080
+    background_color = (10, 10, 15)  # Dark navy/black
+    accent_color = (0, 255, 150)     # Tangible Green
+    text_color = (255, 255, 255)     # White
+    
+    img = Image.new("RGB", (width, height), color=background_color)
+    draw = ImageDraw.Draw(img)
+    
+    # 2. Add Brand Elements
+    draw.rectangle([50, 50, 100, 100], fill=accent_color)  # Logo placeholder
+    
+    # 3. Add Text
+    try:
+        font_title = ImageFont.load_default(size=80)
+        font_sub = ImageFont.load_default(size=40)
+    except:
+        font_title = ImageFont.load_default()
+        font_sub = ImageFont.load_default()
+
+    draw.text((width//2, height//2 - 100), headline, fill=text_color, font=font_title, anchor="mm", align="center")
+    draw.text((width//2, height//2 + 50), subtitle, fill=accent_color, font=font_sub, anchor="mm", align="center")
+    draw.text((width//2, height - 100), "tangibledata.xyz", fill=(100, 100, 100), font=font_sub, anchor="mm")
+
+    # 4. Upload to GCS
+    bucket_name = "tangibledata-assets"
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    filename = f"mcp-posts/{uuid.uuid4()}.png"
+    blob = bucket.blob(filename)
+    
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format="PNG")
+    blob.upload_from_string(img_byte_arr.getvalue(), content_type="image/png")
+    blob.make_public()
+    
+    public_url = blob.public_url
+
+    # 5. Publish to Instagram
+    return publish_instagram_post_with_image(caption, public_url)
+
+def publish_instagram_post_with_image(caption: str, image_url: str) -> str:
+    create_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+    resp = requests.post(
+        create_url,
+        data={
+            "caption": caption,
+            "image_url": image_url,
+            "access_token": IG_ACCESS_TOKEN,
+        },
+        timeout=15,
+    )
+    if not resp.ok:
+        return json.dumps({"error": resp.json()})
+    container_id = resp.json().get("id")
+
+    pub_resp = requests.post(
+        f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish",
+        data={"creation_id": container_id, "access_token": IG_ACCESS_TOKEN},
+        timeout=15,
+    )
+    if not pub_resp.ok:
+        return json.dumps({"error": pub_resp.json()})
+    return json.dumps({"success": True, "post_id": pub_resp.json().get("id"), "image_url": image_url})
 
 if __name__ == "__main__":
     import uvicorn
