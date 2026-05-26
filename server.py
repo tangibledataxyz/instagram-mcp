@@ -222,6 +222,69 @@ def publish_instagram_post_with_image(caption: str, image_url: str) -> str:
 
 
 @mcp.tool()
+def publish_instagram_reel(caption: str, video_url: str, share_to_feed: bool = True) -> str:
+    """
+    Publish a Reel to Instagram from a public video URL.
+    caption: The full Reel caption including hashtags.
+    video_url: Publicly accessible MP4 URL. Instagram Graph API must be able to fetch it.
+    share_to_feed: Whether to also share the Reel to the Instagram feed.
+    """
+    if not is_safe_url(video_url):
+        return json.dumps({"error": "video_url not allowed for security reasons (private/internal range blocked)"})
+
+    create_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+    resp = requests.post(
+        create_url,
+        data={
+            "media_type": "REELS",
+            "video_url": video_url,
+            "caption": caption,
+            "share_to_feed": "true" if share_to_feed else "false",
+            "access_token": IG_ACCESS_TOKEN,
+        },
+        timeout=30,
+    )
+    if not resp.ok:
+        return json.dumps({"error": resp.json()})
+    container_id = resp.json().get("id")
+
+    # Poll the container status. Reels/video processing is asynchronous.
+    status_url = f"https://graph.facebook.com/v19.0/{container_id}"
+    last_status = None
+    for _ in range(30):
+        status_resp = requests.get(
+            status_url,
+            params={"fields": "status_code,status", "access_token": IG_ACCESS_TOKEN},
+            timeout=15,
+        )
+        if status_resp.ok:
+            last_status = status_resp.json()
+            if last_status.get("status_code") == "FINISHED":
+                break
+            if last_status.get("status_code") == "ERROR":
+                return json.dumps({"error": "container_processing_failed", "status": last_status})
+        import time
+        time.sleep(10)
+    else:
+        return json.dumps({"error": "container_processing_timeout", "container_id": container_id, "status": last_status})
+
+    pub_resp = requests.post(
+        f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish",
+        data={"creation_id": container_id, "access_token": IG_ACCESS_TOKEN},
+        timeout=30,
+    )
+    if not pub_resp.ok:
+        return json.dumps({"error": pub_resp.json(), "container_id": container_id, "status": last_status})
+    return json.dumps({
+        "success": True,
+        "post_id": pub_resp.json().get("id"),
+        "container_id": container_id,
+        "video_url": video_url,
+        "status": last_status,
+    })
+
+
+@mcp.tool()
 def get_instagram_account_info() -> str:
     """Get basic info about the connected Instagram account."""
     resp = requests.get(

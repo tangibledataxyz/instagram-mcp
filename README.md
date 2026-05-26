@@ -9,18 +9,41 @@ MCP server para publicar en Instagram desde Claude Desktop.
 | `scrape_website` | Extrae contenido de una URL |
 | `publish_instagram_post` | Publica un post de texto en Instagram |
 | `publish_instagram_post_with_image` | Publica un post con imagen (URL pública) |
+| `publish_instagram_reel` | Publica un Reel desde una URL pública de vídeo MP4 |
 | `get_instagram_account_info` | Info de la cuenta: seguidores, bio, etc. |
 | `get_recent_posts` | Últimos posts publicados |
 
-## Deploy
+## Deploy seguro
+
+El deploy usa Secret Manager. No pasa `IG_ACCESS_TOKEN` ni `MCP_API_KEY` con `--set-env-vars`.
+
+Primera configuración o rotación de secretos:
 
 ```bash
 export PROJECT_ID="tu-gcp-project"
-export IG_ACCESS_TOKEN="tu-token-60-dias"
+export IG_USER_ID="17841470871082749"
+read -rsp "IG_ACCESS_TOKEN: " IG_ACCESS_TOKEN; export IG_ACCESS_TOKEN; echo
+read -rsp "MCP_API_KEY: " MCP_API_KEY; export MCP_API_KEY; echo
+
+bash deploy.sh --setup-secrets
+```
+
+Usar `read -rsp` evita escribir secretos reales en el historial de shell.
+
+Deploys posteriores:
+
+```bash
+export PROJECT_ID="tu-gcp-project"
 export IG_USER_ID="17841470871082749"
 
 bash deploy.sh
 ```
+
+El servicio Cloud Run recibe:
+
+- `IG_ACCESS_TOKEN` desde Secret Manager: `instagram-mcp-ig-access-token`
+- `MCP_API_KEY` desde Secret Manager: `instagram-mcp-api-key`
+- `IG_USER_ID` como variable no secreta
 
 ## Configurar en Claude Desktop
 
@@ -54,11 +77,28 @@ client_secret=TU_APP_SECRET&\
 fb_exchange_token=TU_TOKEN_ACTUAL"
 ```
 
-Actualiza la variable en Cloud Run:
+Actualiza Secret Manager y redespliega:
 
 ```bash
-gcloud run services update instagram-mcp \
-  --region us-central1 \
-  --update-env-vars IG_ACCESS_TOKEN=NUEVO_TOKEN \
-  --project $PROJECT_ID
+read -rsp "NUEVO IG_ACCESS_TOKEN: " IG_ACCESS_TOKEN; export IG_ACCESS_TOKEN; echo
+bash deploy.sh --setup-secrets
 ```
+
+No uses `gcloud run services update --update-env-vars IG_ACCESS_TOKEN=...` porque deja el token como variable de entorno gestionada fuera de Secret Manager.
+
+
+## Publicar Reels
+
+El vídeo debe estar disponible mediante una URL pública accesible por Instagram Graph API.
+
+Herramienta MCP:
+
+```json
+{
+  "caption": "Texto del reel + hashtags",
+  "video_url": "https://storage.googleapis.com/.../reel.mp4",
+  "share_to_feed": true
+}
+```
+
+La herramienta crea el contenedor `media_type=REELS`, espera a que el procesamiento termine y llama a `media_publish`.

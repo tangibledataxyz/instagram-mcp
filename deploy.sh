@@ -1,46 +1,127 @@
 #!/bin/bash
-# Deploy Instagram MCP server to Cloud Run
-# Usage: source .env && bash deploy.sh
+# Deploy Instagram MCP server to Cloud Run without exposing secrets in Cloud Run env vars.
+# Secrets are stored in Secret Manager and mounted with --set-secrets.
+#
+# First setup / rotation, preferably without writing secrets into shell history:
+#   export PROJECT_ID="your-project"
+#   export IG_USER_ID="178..."
+#   read -rsp "IG_ACCESS_TOKEN: " IG_ACCESS_TOKEN; export IG_ACCESS_TOKEN; echo
+#   read -rsp "MCP_API_KEY: " MCP_API_KEY; export MCP_API_KEY; echo
+#   bash deploy.sh --setup-secrets
+#
+# Later deploys:
+#   export PROJECT_ID="your-project"
+#   export IG_USER_ID="178..."
+#   bash deploy.sh
+
+set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:?Set PROJECT_ID}"
-REGION="us-central1"
-SERVICE_NAME="instagram-mcp"
-IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/tangibledata-bot/$SERVICE_NAME"
+REGION="${REGION:-us-central1}"
+SERVICE_NAME="${SERVICE_NAME:-instagram-mcp}"
+REPOSITORY="${REPOSITORY:-tangibledata-bot}"
+IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPOSITORY/$SERVICE_NAME"
+RUNTIME_SA="${RUNTIME_SA:-$SERVICE_NAME-sa@$PROJECT_ID.iam.gserviceaccount.com}"
+SETUP_SECRETS="false"
 
-set -e
+for arg in "$@"; do
+  case "$arg" in
+    --setup-secrets) SETUP_SECRETS="true" ;;
+    *) echo "Unknown arg: $arg" >&2; exit 2 ;;
+  esac
+done
+
+ensure_secret() {
+  local name="$1"
+  local value="${2:-}"
+
+  if ! gcloud secrets describe "$name" --project "$PROJECT_ID" >/dev/null 2>&1; then
+    if [[ -z "$value" ]]; then
+      echo "Secret $name does not exist and no local value was provided." >&2
+      exit 1
+    fi
+    printf "%s" "$value" | gcloud secrets create "$name" \
+      --project "$PROJECT_ID" \
+      --replication-policy="automatic" \
+      --data-file=-
+  elif [[ -n "$value" ]]; then
+    printf "%s" "$value" | gcloud secrets versions add "$name" \
+      --project "$PROJECT_ID" \
+      --data-file=-
+  fi
+}
+
+echo "=== Enable base APIs ==="
+gcloud services enable \
+  run.googleapis.com \
+  cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com \
+  secretmanager.googleapis.com \
+  --project "$PROJECT_ID"
+
+if ! gcloud artifacts repositories describe "$REPOSITORY" \
+  --location "$REGION" \
+  --project "$PROJECT_ID" >/dev/null 2>&1; then
+  echo "=== Create Artifact Registry repository ==="
+  gcloud artifacts repositories create "$REPOSITORY" \
+    --repository-format=docker \
+    --location "$REGION" \
+    --description="Tangible Data bot containers" \
+    --project "$PROJECT_ID"
+fi
+
+if ! gcloud iam service-accounts describe "$RUNTIME_SA" \
+  --project "$PROJECT_ID" >/dev/null 2>&1; then
+  echo "=== Create runtime service account ==="
+  gcloud iam service-accounts create "$SERVICE_NAME-sa" \
+    --display-name="Instagram MCP runtime" \
+    --project "$PROJECT_ID"
+fi
+
+if [[ "$SETUP_SECRETS" == "true" ]]; then
+  echo "=== Create/update secrets from local environment ==="
+  ensure_secret "instagram-mcp-ig-access-token" "${IG_ACCESS_TOKEN:-}"
+  ensure_secret "instagram-mcp-api-key" "${MCP_API_KEY:-}"
+else
+  echo "=== Verify secrets exist ==="
+  gcloud secrets describe instagram-mcp-ig-access-token --project "$PROJECT_ID" >/dev/null
+  gcloud secrets describe instagram-mcp-api-key --project "$PROJECT_ID" >/dev/null
+fi
+
+echo "=== Grant runtime secret access ==="
+gcloud secrets add-iam-policy-binding instagram-mcp-ig-access-token \
+  --project "$PROJECT_ID" \
+  --member "serviceAccount:$RUNTIME_SA" \
+  --role "roles/secretmanager.secretAccessor" >/dev/null
+
+gcloud secrets add-iam-policy-binding instagram-mcp-api-key \
+  --project "$PROJECT_ID" \
+  --member "serviceAccount:$RUNTIME_SA" \
+  --role "roles/secretmanager.secretAccessor" >/dev/null
 
 echo "=== Build & push ==="
 gcloud builds submit . \
-  --tag $IMAGE \
-  --project $PROJECT_ID
+  --tag "$IMAGE" \
+  --project "$PROJECT_ID"
 
 echo "=== Deploy to Cloud Run ==="
-gcloud run deploy $SERVICE_NAME \
-  --image $IMAGE \
-  --region $REGION \
+gcloud run deploy "$SERVICE_NAME" \
+  --image "$IMAGE" \
+  --region "$REGION" \
   --platform managed \
   --no-allow-unauthenticated \
-  --set-env-vars "IG_ACCESS_TOKEN=$IG_ACCESS_TOKEN,IG_USER_ID=$IG_USER_ID" \
-  --project $PROJECT_ID
+  --service-account "$RUNTIME_SA" \
+  --set-env-vars "IG_USER_ID=${IG_USER_ID:?Set IG_USER_ID}" \
+  --set-secrets "IG_ACCESS_TOKEN=instagram-mcp-ig-access-token:latest,MCP_API_KEY=instagram-mcp-api-key:latest" \
+  --project "$PROJECT_ID"
 
-SERVICE_URL=$(gcloud run services describe $SERVICE_NAME \
-  --region $REGION \
-  --project $PROJECT_ID \
+SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+  --region "$REGION" \
+  --project "$PROJECT_ID" \
   --format "value(status.url)")
 
 echo ""
 echo "=== DONE ==="
 echo "MCP URL: $SERVICE_URL/mcp"
 echo ""
-echo "Añade esto a tu claude_desktop_config.json:"
-echo '{
-  "mcpServers": {
-    "instagram-mcp": {
-      "command": "npx",
-      "args": [
-        "mcp-remote",
-        "'$SERVICE_URL'/mcp"
-      ]
-    }
-  }
-}'
+echo "Use mcp-remote with OAuth client_secret equal to your MCP API key, or configure Authorization: Bearer via your MCP client."
