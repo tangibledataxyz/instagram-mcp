@@ -265,27 +265,43 @@ def create_branded_post(headline: str, subtitle: str, caption: str) -> str:
     """
     # 1. Create Image (1:1 Square)
     width, height = 1080, 1080
-    background_color = (10, 10, 15)  # Dark navy/black
-    accent_color = (0, 255, 150)     # Tangible Green
-    text_color = (255, 255, 255)     # White
+    background_color = (26, 26, 26)  # Obsidian (#1A1A1A)
+    accent_color = (146, 180, 193)     # Steel (#92B4C1)
+    text_color = (245, 244, 241)     # Chalk (#F5F4F1)
+    secondary_text = (154, 150, 144)  # Slate (#9A9690)
     
     img = Image.new("RGB", (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
     
-    # 2. Add Brand Elements
-    draw.rectangle([50, 50, 100, 100], fill=accent_color)  # Logo placeholder
+    # 2. Add Brand Elements (Geometric modern shapes)
+    # Background accent bar
+    draw.rectangle([0, height-20, width, height], fill=accent_color)
+    
+    # Logo shape (A minimalist data point)
+    draw.ellipse([80, 80, 140, 140], outline=accent_color, width=4)
+    draw.point([110, 110], fill=accent_color)
     
     # 3. Add Text
     try:
-        font_title = ImageFont.load_default(size=80)
-        font_sub = ImageFont.load_default(size=40)
+        # We try to find a system bold font
+        font_path = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+        font_title = ImageFont.truetype(font_path, 100) if os.path.exists(font_path) else ImageFont.load_default(size=100)
+        font_sub = ImageFont.truetype(font_path, 50) if os.path.exists(font_path) else ImageFont.load_default(size=50)
+        font_footer = ImageFont.load_default(size=30)
     except:
         font_title = ImageFont.load_default()
         font_sub = ImageFont.load_default()
+        font_footer = ImageFont.load_default()
 
-    draw.text((width//2, height//2 - 100), headline, fill=text_color, font=font_title, anchor="mm", align="center")
-    draw.text((width//2, height//2 + 50), subtitle, fill=accent_color, font=font_sub, anchor="mm", align="center")
-    draw.text((width//2, height - 100), "tangibledata.xyz", fill=(100, 100, 100), font=font_sub, anchor="mm")
+    # Draw Headline (Left aligned for modern look)
+    margin = 80
+    draw.text((margin, height//2 - 150), headline.upper(), fill=text_color, font=font_title, align="left")
+    
+    # Draw Subtitle (Indented)
+    draw.text((margin, height//2 + 20), subtitle, fill=accent_color, font=font_sub, align="left")
+    
+    # Draw Footer
+    draw.text((margin, height - 100), "TANGIBLEDATA.XYZ", fill=secondary_text, font=font_footer)
 
     # 4. Upload to GCS
     bucket_name = "tangibledata-assets"
